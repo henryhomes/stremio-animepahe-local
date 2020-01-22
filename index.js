@@ -84,7 +84,7 @@ addon.defineCatalogHandler(args => {
           atPage = parseInt(key)+1
         lastKey = key
       }
-      return !atPage ? lastKey : atPage
+      return !atPage ? parseInt(lastKey)+1 : atPage
     }
 
     const page = findPage(args.extra.skip)
