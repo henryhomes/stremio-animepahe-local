@@ -3,11 +3,9 @@ const async = require('async')
 const pUrl = require('url').parse
 const db = require('./lib/cache')
 
-const package = require('./package')
-
 const manifest = {
     id: 'org.animepahe.anime',
-    version: package.version,
+    version: '1.0.3',
     logo: 'https://marcelinethinks.files.wordpress.com/2015/11/anime-logo-square.png',
     name: 'AnimePahe',
     description: 'Anime from AnimePahe',
