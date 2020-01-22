@@ -6,9 +6,9 @@ This add-on uses [Stremio Kitsu](https://github.com/henryhomes/stremio-kitsu) in
 **Done:**
 
 - catalog
+- catalog skip
 - searching
 - streams to episodes
-- catalog skip
 
 
 **Notice:**
