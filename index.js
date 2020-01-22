@@ -2,6 +2,8 @@ const needle = require('needle')
 const async = require('async')
 const pUrl = require('url').parse
 const db = require('./lib/cache')
+const cloudscraper = require('cloudscraper')
+const { proxy } = require('internal')
 
 const manifest = {
     id: 'org.animepahe.anime',
@@ -26,7 +28,12 @@ const manifest = {
       }, {
         type: 'series',
         id: 'animepahe-latest',
-        name: 'AnimePahe'
+        name: 'AnimePahe',
+        extra: [
+          {
+            name: 'skip'
+          }
+        ]
       }
     ]
 }
@@ -60,31 +67,53 @@ const kitsuEndpoint = 'https://stremio-kitsu.now.sh'
 
 const mapToKitsu = {}
 
+let pages = {}
+
 addon.defineCatalogHandler(args => {
   return new Promise((resolve, reject) => {
 
-    const page = 1
+    function findPage(target) {
+      if (!target)
+        return 1
+      let sum = 0
+      let atPage = 0
+      let lastKey
+      for (key in pages) {
+        sum += pages[key]
+        if (!atPage && sum >= target)
+          atPage = parseInt(key)+1
+        lastKey = key
+      }
+      return !atPage ? lastKey : atPage
+    }
+
+    const page = findPage(args.extra.skip)
 
     let url = endpoint
 
-    if (args.id == 'animepahe-latest')
-      url += '?m=airing&l=12&page=' + page
-    else
+    if (args.id == 'animepahe-latest') {
+      if (page == 1) pages = {} // reset page map
+      url += '?m=airing&l=36&page=' + page
+    } else
       url += '?m=search&l=8&q=' + encodeURIComponent(args.extra.search)
 
     if (cache.metas[url]) {
-      resolve({ metas: cache.metas[url], cacheMaxAge: 345600 })
+      resolve({ metas: cache.metas[url], cacheMaxAge: 2 * 60 * 60 })
       return
     }
 
-    const redisKey = args.extra.search ? null : (args.extra.genre || 'default')
+    const redisKey = args.extra.search ? null : (args.extra.genre || 'default') + '-' + page
 
     db.catalog.get(redisKey, page, redisMetas => {
 
       if (redisMetas)
-        resolve({ metas: redisMetas, cacheMaxAge: 86400 })
+        resolve({ metas: redisMetas, cacheMaxAge: 30 * 60 })
 
-      needle.get(url, { headers }, (err, resp, body) => {
+      cloudscraper.get({ uri: url, headers }).then((body) => {
+        if (typeof body === 'string')
+          try {
+            body = JSON.parse(body)
+          } catch(e) {}
         const series = (body || {}).data || []
         const metas = []
         if (series.length) {
@@ -109,14 +138,15 @@ addon.defineCatalogHandler(args => {
           }, 1)
           queue.drain = () => {
             cache.metas[url] = metas
-            // cache for 4 days (feed) / 6 hours (search)
+            pages[page] = metas.length
+            // cache for 2 hours (feed) / 6 hours (search)
             setTimeout(() => {
               delete cache.metas[url]
-            }, args.id == 'animepahe-latest' ? 345600000 : 21600000)
+            }, args.id == 'animepahe-latest' ? 2 * 60 * 60 * 1000 : 6 * 60 * 60 * 1000)
             if (redisKey)
               db.catalog.set(redisKey, page, metas)
             if (!redisMetas)
-              resolve({ metas, cacheMaxAge: 345600 })
+              resolve({ metas, cacheMaxAge: 2 * 60 * 60 })
           }
           series.forEach(el => { queue.push(el) })
         } else if (!redisMetas)
@@ -140,7 +170,11 @@ addon.defineMetaHandler(args => {
 function findEpisode(apId, episode, page, cb) {
   // guess page
   const getPage = page || Math.ceil(episode / 30)
-  needle.get(endpoint + '?m=release&id=' + apId + '&l=30&sort=episode_asc&page=' + getPage, { headers }, (err, resp, body) => {
+  cloudscraper.get({ uri: endpoint + '?m=release&id=' + apId + '&l=30&sort=episode_asc&page=' + getPage, headers }).then((body) => {
+    if (typeof body === 'string')
+      try {
+        body = JSON.parse(body)
+      } catch(e) {}
     const episodes = (body || {}).data || []
     let epId
     episodes.some(ep => {
@@ -209,7 +243,7 @@ async function getStream(url, cb) {
 addon.defineStreamHandler(args => {
   return new Promise((resolve, reject) => {
     const id = args.id
-    const cacheMaxAge = 604800
+    const cacheMaxAge = 0
     db.get(id, cacheMaxAge, cached => {
       if (cached && cached.streams && cached.streams.length) {
         console.log(cached)
@@ -223,28 +257,35 @@ addon.defineStreamHandler(args => {
         if (apId) {
           findEpisode(apId, episode, null, epId => {
             if (epId) {
-              needle.get(endpoint + '?m=embed&id=' + epId + '&p=kwik', { headers }, (err, resp, body) => {
+              cloudscraper.get({ uri: endpoint + '?m=embed&id=' + epId + '&p=kwik', headers }).then((body) => {
+                if (typeof body === 'string')
+                  try {
+                    body = JSON.parse(body)
+                  } catch(e) {}
                 const urls = ((body || {}).data || {})[epId] || {}
                 if (Object.keys(urls).length) {
                   const streams = []
                   const streamQueue = async.queue((task, cb) => {
                     getStream(task.url, url => {
-                      if (url)
+                      if (url) {
+                        const parsedUrl = pUrl(task.originalUrl)
                         streams.push({
                           title: task.title,
-                          url
+                          url: proxy.addProxy(url, { playlist: true, headers: { referer: task.originalUrl, origin: parsedUrl.protocol + '//' + parsedUrl.host, 'user-agent': headers['User-Agent'] }})
                         })
+                      }
                       cb()
                     })
                   })
                   streamQueue.drain = () => {
                     db.set(id, streams)
-                    resolve({ streams, cacheMaxAge })
+                    resolve({ streams })
                   }
                   for (let key in urls)
                     streamQueue.push({
                       title: (urls[key].disc ? urls[key].disc + ' - ' : '') + key + ' - Stream\nkwik.cx',
-                      url: urls[key].url.replace('/e/','/f/')
+                      url: urls[key].url.replace('/e/','/f/'),
+                      originalUrl: urls[key].url
                     })
                 } else
                   reject(new Error('No sources for id: ' + args.id))
