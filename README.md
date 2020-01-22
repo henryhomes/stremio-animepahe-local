@@ -8,11 +8,7 @@ This add-on uses [Stremio Kitsu](https://github.com/henryhomes/stremio-kitsu) in
 - catalog
 - searching
 - streams to episodes
-
-
-**To do:**
-
-- catalog skip (risky, can lead to duplicates, their catalog is for anime episodes not anime)
+- catalog skip
 
 
 **Notice:**
