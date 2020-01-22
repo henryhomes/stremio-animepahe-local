@@ -58,7 +58,7 @@ function toMeta(id, obj) {
   }
 }
 
-const kitsuEndpoint = 'https://addon.stremio-kitsu.cf'
+const kitsuEndpoint = 'https://stremio-kitsu.now.sh'
 
 const mapToKitsu = {}
 
